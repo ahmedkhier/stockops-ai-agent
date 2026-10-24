@@ -78,3 +78,23 @@ class ProcessingResult(BaseModel):
     review_reason: Optional[str] = Field(
         default=None, description="Reason invoice was quarantined for review, if any"
     )
+
+
+class DashboardMetrics(BaseModel):
+    total_skus: int = Field(..., description="Total distinct active SKUs in catalog")
+    total_units_in_stock: int = Field(..., description="Total sum of stock units in warehouse")
+    total_inventory_value: float = Field(..., description="Total valuation of catalog inventory in USD")
+    auto_committed_count: int = Field(..., description="Count of auto-committed invoices")
+    flagged_pending_count: int = Field(..., description="Count of quarantined entries awaiting review")
+    approved_override_count: int = Field(..., description="Count of human-approved overrides")
+    rejected_count: int = Field(..., description="Count of rejected entries")
+
+
+class LedgerActionResponse(BaseModel):
+    ledger_id: int = Field(..., description="Primary key identifier of the ledger entry")
+    invoice_number: str = Field(..., description="Invoice identifier reference")
+    sku: str = Field(..., description="Stock Keeping Unit involved")
+    previous_status: str = Field(..., description="Status of the ledger entry before action")
+    new_status: str = Field(..., description="Updated status of the ledger entry")
+    updated_stock: int = Field(..., description="Current stock level in catalog after action")
+

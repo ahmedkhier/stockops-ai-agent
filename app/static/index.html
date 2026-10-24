@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>StockOps AI // Autonomous Supply Chain & Inventory Guard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#eff6ff',
+              500: '#3b82f6',
+              600: '#2563eb',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap');
+    body { font-family: 'Inter', sans-serif; }
+    .mono { font-family: 'JetBrains Mono', monospace; }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen antialiased selection:bg-blue-600 selection:text-white">
+
+  <!-- Toast Notification Container -->
+  <div id="toast-container" class="fixed top-5 right-5 z-50 flex flex-col gap-2 max-w-sm pointer-events-none"></div>
+
+  <!-- Top Navigation Header -->
+  <header class="border-b border-slate-800 bg-slate-900/90 backdrop-blur sticky top-0 z-40">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="h-9 w-9 rounded-lg bg-blue-600/20 border border-blue-500/40 flex items-center justify-center text-blue-400">
+          <i data-lucide="shield-alert" class="w-5 h-5"></i>
+        </div>
+        <div>
+          <div class="flex items-center gap-2">
+            <h1 class="text-base font-bold tracking-tight text-white">StockOps AI</h1>
+            <span class="text-xs text-slate-500 mono">//</span>
+            <span class="text-xs text-slate-400 font-medium">Autonomous Supply Chain & Inventory Guard</span>
+          </div>
+          <p class="text-[11px] text-slate-500 mono">Gemini 2.5 Vision + Pydantic v2 Deterministic Guardrails</p>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-3">
+        <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 border border-emerald-500/30 text-emerald-400">
+          <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+          ONLINE
+        </span>
+        <button id="btn-refresh-telemetry" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 transition">
+          <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
+          Refresh Telemetry
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+
+    <!-- Top KPI Telemetry Ribbon (4 Cards) -->
+    <section class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <!-- Card 1: Total Valuation -->
+      <div class="p-4 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between">
+        <div>
+          <p class="text-xs font-medium text-slate-400 uppercase tracking-wider">Total Catalog Value</p>
+          <p id="kpi-total-value" class="text-2xl font-bold text-white mono mt-1">$0.00</p>
+          <p class="text-xs text-slate-500 mt-1"><span id="kpi-total-skus" class="font-semibold text-slate-300">0</span> Active SKUs</p>
+        </div>
+        <div class="p-3 rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-400">
+          <i data-lucide="dollar-sign" class="w-5 h-5"></i>
+        </div>
+      </div>
+
+      <!-- Card 2: Units in Stock -->
+      <div class="p-4 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between">
+        <div>
+          <p class="text-xs font-medium text-slate-400 uppercase tracking-wider">Total Units in Stock</p>
+          <p id="kpi-total-units" class="text-2xl font-bold text-white mono mt-1">0</p>
+          <p class="text-xs text-slate-500 mt-1">Physical Warehouse Count</p>
+        </div>
+        <div class="p-3 rounded-lg bg-indigo-500/10 border border-indigo-500/20 text-indigo-400">
+          <i data-lucide="boxes" class="w-5 h-5"></i>
+        </div>
+      </div>
+
+      <!-- Card 3: Auto-Committed Invoices -->
+      <div class="p-4 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between">
+        <div>
+          <p class="text-xs font-medium text-slate-400 uppercase tracking-wider">Auto-Committed</p>
+          <p id="kpi-auto-committed" class="text-2xl font-bold text-emerald-400 mono mt-1">0</p>
+          <p class="text-xs text-emerald-500/80 mt-1 font-medium">100% Math Verified</p>
+        </div>
+        <div class="p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
+          <i data-lucide="check-circle-2" class="w-5 h-5"></i>
+        </div>
+      </div>
+
+      <!-- Card 4: Quarantined Anomalies -->
+      <div class="p-4 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between">
+        <div>
+          <p class="text-xs font-medium text-slate-400 uppercase tracking-wider">Quarantined (HITL)</p>
+          <p id="kpi-flagged-pending" class="text-2xl font-bold text-amber-400 mono mt-1">0</p>
+          <p class="text-xs text-amber-500/80 mt-1 font-medium">Requires Human Review</p>
+        </div>
+        <div class="p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400">
+          <i data-lucide="alert-triangle" class="w-5 h-5"></i>
+        </div>
+      </div>
+    </section>
+
+    <!-- Main Command Center Grid -->
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+      <!-- Left Column: Ingestion, 1-Click Simulator & Inspector (5 cols) -->
+      <div class="lg:col-span-5 space-y-6">
+
+        <!-- Upload & 1-Click Simulator Card -->
+        <div class="rounded-xl bg-slate-900 border border-slate-800 p-5 space-y-4">
+          <div class="flex items-center justify-between">
+            <h2 class="text-sm font-semibold text-white flex items-center gap-2">
+              <i data-lucide="upload-cloud" class="w-4 h-4 text-blue-400"></i>
+              Multimodal Ingestion Engine
+            </h2>
+            <span class="text-[11px] mono text-slate-500">PNG / JPEG / PDF</span>
+          </div>
+
+          <!-- Drag and Drop Zone -->
+          <div id="dropzone" class="border-2 border-dashed border-slate-700 hover:border-blue-500 rounded-xl p-5 text-center cursor-pointer bg-slate-950/50 hover:bg-slate-900/50 transition">
+            <input type="file" id="file-input" class="hidden" accept="image/png,image/jpeg,image/webp,application/pdf">
+            <div class="flex flex-col items-center gap-2">
+              <div class="h-10 w-10 rounded-full bg-slate-800 flex items-center justify-center text-slate-400">
+                <i data-lucide="file-text" class="w-5 h-5"></i>
+              </div>
+              <p class="text-xs text-slate-300 font-medium">Drop invoice file here, or <span class="text-blue-400 underline">browse</span></p>
+              <p id="selected-filename" class="text-xs mono text-blue-400 font-medium truncate max-w-xs"></p>
+            </div>
+          </div>
+
+          <!-- Upload Action Button -->
+          <button id="upload-button" class="w-full py-2 px-4 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:bg-slate-800 disabled:text-slate-600 text-white font-medium text-xs transition flex items-center justify-center gap-2">
+            <span id="upload-button-text">Extract & Audit Invoice</span>
+            <div id="upload-spinner" class="hidden w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+          </button>
+
+          <!-- 1-Click Instant Simulator Bar -->
+          <div class="pt-3 border-t border-slate-800 space-y-2">
+            <p class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+              <i data-lucide="zap" class="w-3.5 h-3.5 text-amber-400"></i>
+              1-Click Instant Simulator (Zero-API-Key Ready)
+            </p>
+            <div class="grid grid-cols-1 gap-2">
+              <button id="btn-sim-valid" class="w-full py-2 px-3 text-left rounded-lg bg-slate-950 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-xs text-slate-300 flex items-center justify-between transition">
+                <span class="flex items-center gap-2">
+                  <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+                  Simulate Clean Invoice (+10 Panels)
+                </span>
+                <span class="text-[10px] mono text-slate-500">$14.50 (Catalog Match)</span>
+              </button>
+
+              <button id="btn-sim-anomaly" class="w-full py-2 px-3 text-left rounded-lg bg-slate-950 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-xs text-slate-300 flex items-center justify-between transition">
+                <span class="flex items-center gap-2">
+                  <span class="w-2 h-2 rounded-full bg-rose-400"></span>
+                  Simulate +28.5% Price Spike
+                </span>
+                <span class="text-[10px] mono text-rose-400">$36.00 vs $28.00</span>
+              </button>
+
+              <button id="btn-sim-unknown" class="w-full py-2 px-3 text-left rounded-lg bg-slate-950 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-xs text-slate-300 flex items-center justify-between transition">
+                <span class="flex items-center gap-2">
+                  <span class="w-2 h-2 rounded-full bg-amber-400"></span>
+                  Simulate Unknown SKU Quarantine
+                </span>
+                <span class="text-[10px] mono text-amber-400">Unmapped Catalog SKU</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Live Extraction & Guardrail Inspector Card -->
+        <div id="inspection-panel" class="rounded-xl bg-slate-900 border border-slate-800 p-5 space-y-4">
+          <div class="flex items-center justify-between">
+            <h2 class="text-sm font-semibold text-white flex items-center gap-2">
+              <i data-lucide="search-check" class="w-4 h-4 text-emerald-400"></i>
+              Guardrail Inspector & Vision Telemetry
+            </h2>
+            <div id="inspect-status-badge">
+              <span class="px-2 py-0.5 rounded text-[11px] font-semibold bg-slate-800 text-slate-400">IDLE</span>
+            </div>
+          </div>
+
+          <div id="inspect-content" class="space-y-3">
+            <p class="text-xs text-slate-500 italic">No recent invoice processed. Upload an invoice or run a simulator scenario to inspect telemetry.</p>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Right Column: Inventory Catalog & HITL Ledger Queue (7 cols) -->
+      <div class="lg:col-span-7 space-y-6">
+
+        <!-- Master Inventory Catalog Table -->
+        <div class="rounded-xl bg-slate-900 border border-slate-800 overflow-hidden">
+          <div class="px-5 py-4 border-b border-slate-800 flex items-center justify-between">
+            <h2 class="text-sm font-semibold text-white flex items-center gap-2">
+              <i data-lucide="database" class="w-4 h-4 text-indigo-400"></i>
+              Master Inventory Catalog
+            </h2>
+            <span class="text-xs text-slate-500 mono">SQLite Catalog Table</span>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="w-full text-left text-xs">
+              <thead class="bg-slate-950/60 text-slate-400 font-semibold uppercase tracking-wider text-[10px] border-b border-slate-800">
+                <tr>
+                  <th class="px-4 py-3">SKU</th>
+                  <th class="px-4 py-3">Product Name</th>
+                  <th class="px-4 py-3 text-right">Current Stock</th>
+                  <th class="px-4 py-3 text-right">Avg Unit Cost</th>
+                  <th class="px-4 py-3 text-right">Valuation</th>
+                </tr>
+              </thead>
+              <tbody id="inventory-table-body" class="divide-y divide-slate-800/60">
+                <tr><td colspan="5" class="px-4 py-6 text-center text-slate-500">Loading catalog...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Immutable Audit Ledger & Quarantine HITL Queue -->
+        <div class="rounded-xl bg-slate-900 border border-slate-800 overflow-hidden">
+          <div class="px-5 py-4 border-b border-slate-800 flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <h2 class="text-sm font-semibold text-white flex items-center gap-2">
+                <i data-lucide="history" class="w-4 h-4 text-amber-400"></i>
+                Stock Ledger & Human-in-the-Loop Queue
+              </h2>
+              <span id="hitl-pending-pill" class="hidden px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                0 PENDING
+              </span>
+            </div>
+            <span class="text-xs text-slate-500 mono">Audit Ledger</span>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="w-full text-left text-xs">
+              <thead class="bg-slate-950/60 text-slate-400 font-semibold uppercase tracking-wider text-[10px] border-b border-slate-800">
+                <tr>
+                  <th class="px-3 py-3">ID</th>
+                  <th class="px-3 py-3">Invoice #</th>
+                  <th class="px-3 py-3">SKU</th>
+                  <th class="px-3 py-3 text-right">Qty</th>
+                  <th class="px-3 py-3 text-right">Billed Price</th>
+                  <th class="px-3 py-3 text-center">Status</th>
+                  <th class="px-3 py-3 text-center">HITL Action</th>
+                </tr>
+              </thead>
+              <tbody id="ledger-table-body" class="divide-y divide-slate-800/60">
+                <tr><td colspan="7" class="px-4 py-6 text-center text-slate-500">Loading ledger...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+
+  </main>
+
+  <footer class="border-t border-slate-800 py-6 mt-12 text-center text-xs text-slate-500">
+    <p>StockOps Autonomous AI Agent // Enterprise Multimodal Vision & Deterministic Guardrails</p>
+  </footer>
+
+  <script src="/static/app.js"></script>
+  <script>
+    lucide.createIcons();
+  </script>
+</body>
+</html>

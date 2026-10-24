@@ -1,165 +1,159 @@
-# Project Specification: StockOps Autonomous Inventory & Supply Chain Agent (`stockops-ai-agent`)
+# UI Expansion Specification: StockOps Live Ops Dashboard & Human-in-the-Loop Queue (`stockops-ai-agent`)
 
 ## 1. Role & Objective
-You are an autonomous Staff AI Engineer. Your task is to build, test, document, and containerize a production-grade GitHub repository named `stockops-ai-agent`.
 
-The system ingests supplier invoices (PNG/JPEG/PDF), extracts structured line items using the Gemini API (`google-genai`), enforces deterministic arithmetic guardrails via Pydantic v2, cross-checks unit prices against a historical SQLite inventory catalog, auto-commits valid stock, and dispatches webhook alerts (n8n/Slack compatible) when price spikes or low-confidence extractions occur.
+You are an autonomous Staff Full-Stack AI Engineer working inside the existing `stockops-ai-agent` repository (where the core backend, Pydantic v2 math guardrails, SQLite ledger, and 22 unit/integration tests are already implemented).
 
-**Execution Rule:** Execute this specification phase by phase (Phases 1 through 6). Do not move to the next phase until the current phase's verification command passes with zero errors.
+Your objective is to build, test, and integrate a production-grade **Live Operations Web Dashboard UI** served directly by FastAPI at `http://localhost:8000/` alongside **Human-in-the-Loop (HITL) Quarantine Resolution APIs**.
+
+**Execution Rule:** Execute this specification phase by phase (UI Phases 1 through 6). Do not move to the next phase until the current phase's `pytest` verification command passes with zero errors and all original 22 tests remain green.
 
 ---
 
 ## 2. Strict Technical Constraints (DO NOT VIOLATE)
-1. **Google GenAI SDK:** Use ONLY the current `google-genai` package (`from google import genai` and `from google.genai import types`). NEVER use the deprecated `google-generativeai` package.
-2. **Pydantic v2 Syntax:** Use ONLY Pydantic v2 methods (`model_validate_json`, `model_dump`, `@model_validator(mode="after")`, `ConfigDict`). NEVER use Pydantic v1 `@validator` or `.dict()`.
-3. **Offline Testability:** All unit and integration tests in `pytest` MUST pass without requiring a live `GEMINI_API_KEY` by mocking the Gemini client for deterministic pipeline testing, while supporting live API calls when the key is present.
-4. **Synthetic Sample Generation:** Include a script using `Pillow` (`PIL`) that generates two realistic synthetic invoice PNGs in `sample_data/` so any developer cloning the repo can test the full vision pipeline immediately.
+
+1. **Zero-Node Single-Command Startup:** Serve the frontend UI directly from FastAPI (`GET /` and `/static/*`) so running `uvicorn app.main:app --reload --port 8000` launches both the REST API and the full interactive Web UI on port `8000` without requiring a separate Node.js build server.
+2. **Smart Demo Fallback Mode:** If `GEMINI_API_KEY` is missing or set to the placeholder `your_api_key_here`, the 1-click sample simulator and sample invoice uploads (`valid_invoice.png` and `anomaly_invoice.png`) MUST gracefully fall back to deterministic sample payloads so a user or recruiter testing the UI locally without an API key experiences the full pipeline without a `500` crash. When a valid `GEMINI_API_KEY` is configured, use the live Gemini Vision API (`google-genai`).
+3. **Preserve Existing Tests:** Do not break any of the existing 22 tests in `evals/test_schemas.py` and `evals/test_pipeline.py`. Add new tests for the UI routes, KPI metrics, and HITL approve/reject endpoints.
+4. **Silence Pytest Warnings:** Configure `pyproject.toml` so `pytest -v` runs with zero warnings.
 
 ---
 
-## 3. Target Repository Architecture
+## 3. Target Repository Additions
 
-~~~text
+```
 stockops-ai-agent/
 ├── app/
-│   ├── __init__.py
-│   ├── main.py                  # FastAPI application & endpoints
-│   ├── schemas.py               # Pydantic v2 models & arithmetic validators
-│   ├── agent.py                 # Gemini multimodal extraction & self-correction loop
-│   ├── database.py              # SQLite inventory catalog & ledger operations
-│   └── notifier.py              # Async httpx webhook dispatcher
-├── scripts/
-│   └── generate_samples.py      # Pillow script to render synthetic test invoices
-├── sample_data/
-│   ├── valid_invoice.png        # Generated clean invoice matching catalog prices
-│   └── anomaly_invoice.png      # Generated invoice with a >15% unit price spike
+│   ├── main.py                  # Add UI mount, /api/v1/metrics, demo trigger, and HITL approve/reject endpoints
+│   ├── database.py              # Add get_dashboard_metrics(), approve_ledger_entry(), reject_ledger_entry()
+│   ├── schemas.py               # Add DashboardMetrics and LedgerActionResponse models
+│   └── static/
+│       ├── index.html           # Industrial Dark-Mode Live Ops Dashboard (Tailwind CSS + Lucide Icons)
+│       └── app.js               # Async state manager, drag-and-drop uploader, live ledger & HITL controls
 ├── evals/
-│   ├── __init__.py
-│   ├── test_schemas.py          # Math & schema guardrail tests
-│   ├── test_pipeline.py         # End-to-end FastAPI + SQLite + Mocked LLM tests
-│   └── run_benchmark.py         # CLI evaluation table generator for README
-├── .env.example
-├── .gitignore
-├── Dockerfile
-├── docker-compose.yml
-├── requirements.txt
-└── README.md
-~~~
+│   └── test_ui_and_hitl.py      # New integration test suite for UI serving, metrics, and HITL workflows
+├── pyproject.toml               # Pytest configuration to silence asyncio loop-scope warnings
+└── README.md                    # Updated with Web Dashboard documentation and UI routes
+```
 
 ---
 
-## 4. Phased Execution Plan & Verification Gates
+## 4. Phased UI Execution Plan & Verification Gates
 
-### PHASE 1: Scaffolding & Dependencies
-1. Create the directory structure (`app/`, `scripts/`, `sample_data/`, `evals/`, `data/`).
-2. Create `.gitignore` (ignore `.env`, `__pycache__/`, `.pytest_cache/`, `data/*.db`, `.venv/`).
-3. Create `.env.example` with:
-   - `GEMINI_API_KEY=your_api_key_here`
-   - `GEMINI_MODEL=gemini-2.5-flash`
-   - `PRICE_SPIKE_THRESHOLD_PCT=15.0`
-   - `MIN_CONFIDENCE_SCORE=0.85`
-   - `ALERT_WEBHOOK_URL=http://n8n:5678/webhook/invoice-anomaly`
-4. Create `requirements.txt` with:
-   - `fastapi>=0.115.0`
-   - `uvicorn[standard]>=0.34.0`
-   - `pydantic>=2.10.0`
-   - `google-genai>=1.2.0`
-   - `python-multipart>=0.0.20`
-   - `httpx>=0.28.0`
-   - `pillow>=11.0.0`
-   - `pytest>=8.3.0`
-   - `pytest-asyncio>=0.25.0`
-5. **Verification Gate 1:** Install dependencies in the active environment and verify all core packages import cleanly without errors.
+### UI PHASE 1: Pytest Configuration & Database Human-in-the-Loop (HITL) Engine
 
----
-
-### PHASE 2: Pydantic v2 Schemas & Deterministic Math Guardrails (TDD)
-1. Implement `app/schemas.py`:
-   - `InvoiceLineItem`:
-     - Fields: `sku` (`str`), `description` (`str`), `quantity` (`int`, `gt=0`), `unit_price` (`float`, `ge=0.0`), `line_total` (`float`, `ge=0.0`).
-     - Add `@model_validator(mode="after")` verifying `abs(round(self.quantity * self.unit_price, 2) - round(self.line_total, 2)) <= 0.05`. Raise a descriptive `ValueError` containing the SKU and expected vs. stated math on mismatch.
-   - `ExtractedInvoice`:
-     - Fields: `supplier_name` (`str`), `invoice_number` (`str`), `invoice_date` (`date`), `currency` (`str`, default `"USD"`), `items` (`List[InvoiceLineItem]`, `min_length=1`), `subtotal` (`float`, `ge=0.0`), `tax_amount` (`float`, default `0.0`, `ge=0.0`), `total_amount` (`float`, `ge=0.0`), `extraction_confidence` (`float`, `ge=0.0`, `le=1.0`).
-     - Add `@model_validator(mode="after")` verifying that the sum of `item.line_total` matches `subtotal` within `0.10` tolerance, and `subtotal + tax_amount` matches `total_amount` within `0.10` tolerance.
-   - `PriceAnomalyFlag`:
-     - Fields: `sku` (`str`), `extracted_unit_price` (`float`), `historical_avg_price` (`float`), `deviation_pct` (`float`), `reason` (`str`).
-   - `ProcessingResult`:
-     - Fields: `status` (`str`: `"AUTO_COMMITTED"` or `"FLAGGED_FOR_REVIEW"`), `invoice` (`ExtractedInvoice`), `anomalies` (`List[PriceAnomalyFlag]` = `[]`), `review_reason` (`Optional[str]` = `None`).
-2. Implement `evals/test_schemas.py`:
-   - Test 1: Valid invoice payload passes validation cleanly.
-   - Test 2: Hallucinated line-item multiplication raises `ValidationError` matching `"Line math mismatch"`.
-   - Test 3: Mismatched invoice subtotal raises `ValidationError` matching `"Subtotal mismatch"`.
-3. **Verification Gate 2:** Run `pytest evals/test_schemas.py` and confirm 100% pass rate before proceeding.
+1. Create `pyproject.toml` in the project root to silence `pytest-asyncio` warnings:
+   ```toml
+   [tool.pytest.ini_options]
+   minversion = "8.0"
+   testpaths = ["evals"]
+   asyncio_mode = "auto"
+   asyncio_default_fixture_loop_scope = "function"
+   ```
+2. Update `app/schemas.py` with new Pydantic v2 response models:
+   * `DashboardMetrics`:
+     * `total_skus` (`int`)
+     * `total_units_in_stock` (`int`)
+     * `total_inventory_value` (`float`)
+     * `auto_committed_count` (`int`)
+     * `flagged_pending_count` (`int`)
+     * `approved_override_count` (`int`)
+     * `rejected_count` (`int`)
+   * `LedgerActionResponse`:
+     * `ledger_id` (`int`)
+     * `invoice_number` (`str`)
+     * `sku` (`str`)
+     * `previous_status` (`str`)
+     * `new_status` (`str`)
+     * `updated_stock` (`int`)
+3. Update `app/database.py` with three new functions:
+   * `get_dashboard_metrics() -> dict`: Queries `inventory_catalog` and `stock_ledger` to compute `DashboardMetrics` fields (rounding `total_inventory_value` to 2 decimal places).
+   * `approve_ledger_entry(ledger_id: int) -> dict`:
+     * Fetches the row from `stock_ledger` by `id`. Raises `KeyError` if not found, or `ValueError` if `status != "FLAGGED_FOR_REVIEW"`.
+     * Updates `stock_ledger.status` to `"APPROVED_OVERRIDE"`.
+     * If the SKU exists in `inventory_catalog`, increments `current_stock` by `quantity_added`. If the SKU was previously unrecognized, inserts it into `inventory_catalog` with `name = f"Imported SKU ({sku})"`, `current_stock = quantity_added`, and `avg_unit_cost = unit_price`.
+     * Returns dictionary matching `LedgerActionResponse`.
+   * `reject_ledger_entry(ledger_id: int) -> dict`:
+     * Fetches the row from `stock_ledger` by `id`. Raises `KeyError` if not found, or `ValueError` if `status != "FLAGGED_FOR_REVIEW"`.
+     * Updates `stock_ledger.status` to `"REJECTED"` without modifying `inventory_catalog.current_stock`.
+     * Returns dictionary matching `LedgerActionResponse`.
+4. **Verification Gate 1:** Create `evals/test_ui_and_hitl.py` with unit tests verifying `get_dashboard_metrics`, `approve_ledger_entry` (confirming stock increments upon approval), and `reject_ledger_entry` (confirming stock remains unchanged). Run `pytest -v`.
 
 ---
 
-### PHASE 3: SQLite Inventory Ledger & Historical Price Engine
-1. Implement `app/database.py`:
-   - Read database path dynamically from `os.getenv("SQLITE_DB_PATH", "data/inventory.db")` so tests can isolate temporary databases.
-   - Create `init_db()` which creates two tables:
-     - `inventory_catalog (sku TEXT PRIMARY KEY, name TEXT NOT NULL, current_stock INTEGER NOT NULL DEFAULT 0, avg_unit_cost REAL NOT NULL)`
-     - `stock_ledger (id INTEGER PRIMARY KEY AUTOINCREMENT, invoice_number TEXT NOT NULL, sku TEXT NOT NULL, quantity_added INTEGER NOT NULL, unit_price REAL NOT NULL, status TEXT NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`
-   - Seed `inventory_catalog` (`INSERT OR IGNORE`) with 4 realistic electrical/lighting SKUs:
-     - `("LED-PNL-6060-40W", "Backlit LED Panel 60x60cm 40W 6500K", 120, 14.50)`
-     - `("FL-COB-100W-IP65", "Outdoor Floodlight 100W IP65 Aluminum", 45, 28.00)`
-     - `("DRV-24V-150W-IP67", "Waterproof LED Driver 24V 150W", 80, 19.20)`
-     - `("CBL-H07RN-F-3G1.5", "Heavy Duty Rubber Cable 3x1.5mm (100m Roll)", 15, 85.00)`
-   - Implement `get_historical_unit_cost(sku: str) -> Optional[float]`.
-   - Implement `commit_invoice_to_stock(invoice: ExtractedInvoice, status: str) -> None`:
-     - Always insert an audit row into `stock_ledger`.
-     - Only increment `current_stock` in `inventory_catalog` when `status == "AUTO_COMMITTED"`.
-2. **Verification Gate 3:** Add database tests in `evals/test_pipeline.py` verifying catalog seeding, stock increments on `AUTO_COMMITTED`, and stock preservation when `FLAGGED_FOR_REVIEW`. Run `pytest`.
+### UI PHASE 2: FastAPI HITL Endpoints, KPI Route & 1-Click Sample Simulator
+
+1. Update `app/main.py` with the following endpoints:
+   * `GET /api/v1/metrics` -> returns `DashboardMetrics` via `get_dashboard_metrics()`.
+   * `POST /api/v1/ledger/{ledger_id}/approve` -> calls `approve_ledger_entry(ledger_id)`. Returns `404` on `KeyError`, `400` on `ValueError`, or `200` with `LedgerActionResponse`.
+   * `POST /api/v1/ledger/{ledger_id}/reject` -> calls `reject_ledger_entry(ledger_id)`. Returns `404` on `KeyError`, `400` on `ValueError`, or `200` with `LedgerActionResponse`.
+   * `POST /api/v1/invoices/simulate/{scenario}`:
+     * Accepts `scenario` in `("valid", "anomaly", "unrecognized_sku")`.
+     * Runs a deterministic simulation through `evaluate_anomalies()`, `commit_invoice_to_stock()`, and `trigger_anomaly_webhook()` so users can test the full pipeline from the Web UI with a single click—even before configuring a live `GEMINI_API_KEY`:
+       * `"valid"`: `INV-2026-101`, `Lumiere Industrial Supply`, 10x `LED-PNL-6060-40W` @ $\$14.50 = \$145.00$, confidence $0.98$.
+       * `"anomaly"`: `INV-2026-102`, `Lumiere Industrial Supply`, 5x `FL-COB-100W-IP65` @ $\$36.00 = \$180.00$ ($+28.57\%$ price spike over $\$28.00$), confidence $0.95$.
+       * `"unrecognized_sku"`: `INV-2026-103`, `Atlas Power Components`, 4x `XFMR-DIN-24V-200W` @ $\$42.00 = \$168.00$ (unmapped catalog SKU), confidence $0.94$.
+   * Update `POST /api/v1/invoices/ingest`:
+     * If `GEMINI_API_KEY` is missing or equals `"your_api_key_here"` AND the uploaded filename matches `valid_invoice.png` or `anomaly_invoice.png`, automatically use the corresponding deterministic `ExtractedInvoice` payload so local file-upload testing works seamlessly offline.
+2. **Verification Gate 2:** Add API integration tests in `evals/test_ui_and_hitl.py` testing `/api/v1/metrics`, `/api/v1/invoices/simulate/valid`, `/api/v1/invoices/simulate/anomaly`, `/api/v1/ledger/{id}/approve`, and `/api/v1/ledger/{id}/reject`. Run `pytest -v`.
 
 ---
 
-### PHASE 4: Multimodal Agent, Self-Correction Loop & Webhook Dispatcher
-1. Implement `app/agent.py`:
-   - `extract_invoice_from_bytes(file_bytes: bytes, mime_type: str, max_retries: int = 2) -> ExtractedInvoice`:
-     - Uses `genai.Client(api_key=os.getenv("GEMINI_API_KEY"))`.
-     - Calls `client.models.generate_content` with `response_mime_type="application/json"` and `response_schema=ExtractedInvoice`.
-     - Parses response with `ExtractedInvoice.model_validate_json(response.text)`.
-     - If `ValidationError` is raised, appends the validation traceback to the prompt and retries up to `max_retries` times so the LLM self-corrects arithmetic mistakes.
-   - `evaluate_anomalies(invoice: ExtractedInvoice) -> Tuple[str, List[PriceAnomalyFlag], Optional[str]]`:
-     - Flags if `invoice.extraction_confidence < MIN_CONFIDENCE_SCORE`.
-     - Flags if any item `sku` is missing from `inventory_catalog`.
-     - Flags if `((item.unit_price - historical_cost) / historical_cost) * 100 > PRICE_SPIKE_THRESHOLD_PCT`.
-     - Returns `("FLAGGED_FOR_REVIEW", anomalies, review_reason)` if any flags exist, else `("AUTO_COMMITTED", [], None)`.
-2. Implement `app/notifier.py`:
-   - `trigger_anomaly_webhook(result: ProcessingResult) -> None`:
-     - Sends an async POST request via `httpx.AsyncClient(timeout=10.0)` to `ALERT_WEBHOOK_URL` if configured. Logs warnings gracefully on network errors without crashing the request.
-3. **Verification Gate 4:** Add unit tests in `evals/test_pipeline.py` mocking the Gemini client to verify:
-   - Self-correction retry loop recovers when attempt 1 returns bad math and attempt 2 returns fixed math.
-   - Price spike detection accurately flags a >15% price increase.
-   - Run `pytest` and verify all tests pass.
+### UI PHASE 3: Industrial Dark-Mode Live Ops Dashboard (`app/static/index.html`)
+
+1. Create `app/static/index.html` using Tailwind CSS CDN (`https://cdn.tailwindcss.com`) and Lucide Icons (`https://unpkg.com/lucide@latest`) with a clean, high-contrast slate/emerald/amber/rose industrial command-center aesthetic:
+   * **Header Bar:**
+     * Project title (`StockOps AI // Autonomous Supply Chain & Inventory Guard`), live API health indicator badge (`ONLINE`), and a `"Refresh Telemetry"` button.
+   * **Top KPI Telemetry Ribbon (4 Cards):**
+     * **Total Catalog Value:** Formatted currency (`#kpi-total-value`) + total SKU count (`#kpi-total-skus`).
+     * **Total Units in Stock:** Live sum of warehouse units (`#kpi-total-units`).
+     * **Auto-Committed Invoices:** Count of clean ledger transactions (`#kpi-auto-committed`) with emerald badge.
+     * **Quarantined Anomalies:** Count of `FLAGGED_FOR_REVIEW` items (`#kpi-flagged-pending`) with amber/rose alert indicator.
+   * **Left Column — Multimodal Invoice Ingestion & 1-Click Simulator:**
+     * **Drag-and-Drop Upload Zone (`#dropzone`):** Supports clicking or dragging `PNG`, `JPEG`, `WEBP`, or `PDF` invoices, showing selected filename and an `"Extract & Audit Invoice"` submit button.
+     * **Instant Demo Simulator Bar:** Three buttons for zero-setup testing:
+       1. `"Simulate Clean Invoice (+10 Panels)"` -> triggers `POST /api/v1/invoices/simulate/valid`
+       2. `"Simulate +28.5% Price Spike"` -> triggers `POST /api/v1/invoices/simulate/anomaly`
+       3. `"Simulate Unknown SKU"` -> triggers `POST /api/v1/invoices/simulate/unrecognized_sku`
+     * **Live Extraction & Guardrail Inspector Card (`#inspection-panel`):**
+       * Shows the most recently processed invoice's metadata (`supplier_name`, `invoice_number`, `invoice_date`, `extraction_confidence` progress bar, Pydantic Math Check badge `VERIFIED`, and status pill `AUTO_COMMITTED` vs `FLAGGED_FOR_REVIEW`).
+       * Lists extracted line items and renders high-visibility alert boxes for every `PriceAnomalyFlag` (`sku`, `extracted_unit_price` vs `historical_avg_price`, and `+deviation_pct%`).
+   * **Right Column — Master Inventory Catalog & Audit Ledger Queue:**
+     * **Master Inventory Catalog Table (`#inventory-table-body`):** Displays `SKU`, `Product Name`, `Current Stock` (with visual badge), `Historical Avg Cost`, and `Total Line Valuation`.
+     * **Immutable Audit Ledger & Quarantine Queue (`#ledger-table-body`):** Displays `ID`, `Invoice #`, `SKU`, `Qty`, `Unit Price`, `Status Badge`, and **Human-in-the-Loop Action Buttons**:
+       * Whenever a row has `status === "FLAGGED_FOR_REVIEW"`, render interactive **"Approve"** (emerald) and **"Reject"** (rose) buttons directly inside the row.
+2. Mount `app/static` in `app/main.py` and serve `app/static/index.html` at `GET /` using `FileResponse`.
+3. **Verification Gate 3:** Add a test in `evals/test_ui_and_hitl.py` asserting `GET /` returns HTTP `200` and contains `"StockOps AI"`. Run `pytest -v`.
 
 ---
 
-### PHASE 5: FastAPI Application, Synthetic Invoices & Evaluation Benchmark
-1. Implement `app/main.py`:
-   - Use FastAPI `lifespan` context manager to call `init_db()`.
-   - `GET /health` -> returns `{"status": "ok"}`.
-   - `GET /api/v1/inventory` -> returns all rows from `inventory_catalog`.
-   - `GET /api/v1/ledger` -> returns all rows from `stock_ledger`.
-   - `POST /api/v1/invoices/ingest` -> accepts `UploadFile`, validates `content_type` (`image/png`, `image/jpeg`, `image/webp`, `application/pdf`), extracts invoice, evaluates anomalies, commits to database, triggers webhook if flagged, and returns `ProcessingResult`.
-2. Implement `scripts/generate_samples.py`:
-   - Uses `PIL.Image` and `PIL.ImageDraw` to generate two clean invoice PNG images in `sample_data/`:
-     - `sample_data/valid_invoice.png`: Billed by "Lumiere Industrial Supply", Invoice `INV-2026-101`, 10x `LED-PNL-6060-40W` @ $14.50 = $145.00.
-     - `sample_data/anomaly_invoice.png`: Billed by "Lumiere Industrial Supply", Invoice `INV-2026-102`, 5x `FL-COB-100W-IP65` @ $36.00 = $180.00 (+28.57% spike over $28.00 catalog price).
-3. Implement `evals/run_benchmark.py`:
-   - Executes 5 deterministic evaluation scenarios (Clean Invoice Auto-Commit, Math Hallucination Self-Correction, +28.57% Price Spike Detection, Unrecognized SKU Quarantine, Low OCR Confidence Gate) and prints a Markdown benchmark scorecard table to stdout.
-4. **Verification Gate 5:**
-   - Run `python scripts/generate_samples.py` and verify PNGs are created.
-   - Add FastAPI `TestClient` integration tests to `evals/test_pipeline.py` and run `pytest`.
-   - Run `python evals/run_benchmark.py` and capture the Markdown table output.
+### UI PHASE 4: Interactive Frontend Controller (`app/static/app.js`)
+
+1. Implement `app/static/app.js` with clean, modular `async/await` logic:
+   * `fetchDashboardState()`: Calls `/api/v1/metrics`, `/api/v1/inventory`, and `/api/v1/ledger` in parallel (`Promise.all`) and updates the DOM tables and KPI cards without page reloads.
+   * `handleFileUpload(file)`: Sends `FormData` to `POST /api/v1/invoices/ingest`, displays a loading spinner during extraction, renders the returned `ProcessingResult` in the Guardrail Inspector Card, shows a toast notification, and refreshes the dashboard state.
+   * `runSimulation(scenario)`: Calls `POST /api/v1/invoices/simulate/{scenario}`, renders the `ProcessingResult` in the Guardrail Inspector Card, and refreshes all tables.
+   * `resolveLedgerAnomaly(ledgerId, action)`: Calls `POST /api/v1/ledger/{ledgerId}/{action}` (`"approve"` or `"reject"`), shows a confirmation toast, and immediately refreshes KPIs, inventory stock levels, and ledger status badges.
+2. **Verification Gate 4:** Verify `GET /static/app.js` returns HTTP `200` via FastAPI `TestClient`. Run `pytest -v`.
 
 ---
 
-### PHASE 6: Dockerization & Portfolio-Grade README
-1. Create `Dockerfile` using `python:3.12-slim`, installing `requirements.txt`, copying the repository files, and launching `uvicorn app.main:app --host 0.0.0.0 --port 8000`.
-2. Create `docker-compose.yml` with `stockops-agent` (port `8000:8000`) and `n8n` (`docker.n8n.io/n8nio/n8n:latest`, port `5678:5678`).
-3. Create `README.md` with:
-   - Badges for Python 3.12, FastAPI, Pydantic v2, Google Gemini API, and Docker.
-   - Executive overview and Mermaid architecture diagram showing the Ingress -> Gemini Vision -> Pydantic Math Guardrail (Self-Healing Loop) -> SQLite Price Audit -> Webhook Alert pipeline.
-   - One-command setup instructions (`docker compose up --build`) and `curl` test commands using `sample_data/valid_invoice.png` and `sample_data/anomaly_invoice.png`.
-   - The exact Markdown table generated by `python evals/run_benchmark.py`.
-4. **Final Verification Gate:** Run `pytest -v` across the entire repository and ensure 100% of tests pass with zero errors.
+### UI PHASE 5: End-to-End Integration & Benchmark Verification
+
+1. In `evals/test_ui_and_hitl.py`, write a comprehensive end-to-end lifecycle test (`test_full_ui_hitl_quarantine_and_approval_lifecycle`) that:
+   * Calls `POST /api/v1/invoices/simulate/anomaly` and verifies `FL-COB-100W-IP65` is `FLAGGED_FOR_REVIEW` and its catalog stock remains at `45`.
+   * Checks `GET /api/v1/metrics` and verifies `flagged_pending_count == 1`.
+   * Calls `POST /api/v1/ledger/{ledger_id}/approve` on the quarantined entry.
+   * Verifies `FL-COB-100W-IP65` stock in `GET /api/v1/inventory` is now incremented from `45` to `50`, and `flagged_pending_count == 0` while `approved_override_count == 1`.
+2. **Verification Gate 5:** Run `pytest -v` and `python evals/run_benchmark.py` and confirm 100% pass rate with zero warnings.
+
+---
+
+### UI PHASE 6: Docker & README Documentation Update
+
+1. Update `Dockerfile` to ensure `app/static` is copied into the container image.
+2. Update `README.md` to showcase:
+   * How to launch and access the **Live Ops Web Dashboard** at `http://localhost:8000/`.
+   * The new Human-in-the-Loop API endpoints (`GET /api/v1/metrics`, `POST /api/v1/ invoices/simulate/{scenario}`, `POST /api/v1/ledger/{id}/approve`, `POST /api/v1/ledger/{id}/reject`).
+   * Updated test count in the verification section.
+3. **Final Verification Gate:** Run `pytest -v` across the entire test suite and ensure 100% of tests pass with zero warnings.

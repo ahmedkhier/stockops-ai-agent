@@ -4,7 +4,7 @@ import os
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Dict, Generator, List, Optional
+from typing import Any, Dict, Generator, List, Optional
 from app.schemas import ExtractedInvoice
 
 DEFAULT_DB_PATH = os.getenv("SQLITE_DB_PATH", "data/inventory.db")
@@ -143,3 +143,148 @@ def get_stock_ledger(db_path: Optional[str] = None) -> List[Dict]:
         )
         rows = cursor.fetchall()
         return [dict(row) for row in rows]
+
+
+def get_dashboard_metrics(db_path: Optional[str] = None) -> Dict[str, Any]:
+    """Query catalog and ledger to compute live dashboard KPIs."""
+    with get_connection(db_path) as conn:
+        cursor = conn.cursor()
+
+        # Catalog totals
+        cursor.execute(
+            """
+            SELECT 
+                COUNT(sku) as total_skus,
+                COALESCE(SUM(current_stock), 0) as total_units,
+                COALESCE(SUM(current_stock * avg_unit_cost), 0.0) as total_val
+            FROM inventory_catalog
+            """
+        )
+        cat_row = cursor.fetchone()
+        total_skus = int(cat_row["total_skus"] or 0)
+        total_units = int(cat_row["total_units"] or 0)
+        total_val = round(float(cat_row["total_val"] or 0.0), 2)
+
+        # Ledger status counts
+        cursor.execute(
+            """
+            SELECT status, COUNT(*) as cnt
+            FROM stock_ledger
+            GROUP BY status
+            """
+        )
+        status_counts = {row["status"]: row["cnt"] for row in cursor.fetchall()}
+
+        return {
+            "total_skus": total_skus,
+            "total_units_in_stock": total_units,
+            "total_inventory_value": total_val,
+            "auto_committed_count": status_counts.get("AUTO_COMMITTED", 0),
+            "flagged_pending_count": status_counts.get("FLAGGED_FOR_REVIEW", 0),
+            "approved_override_count": status_counts.get("APPROVED_OVERRIDE", 0),
+            "rejected_count": status_counts.get("REJECTED", 0),
+        }
+
+
+def approve_ledger_entry(ledger_id: int, db_path: Optional[str] = None) -> Dict[str, Any]:
+    """Approve a quarantined ledger entry, update status to APPROVED_OVERRIDE, and increment catalog stock."""
+    with get_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id, invoice_number, sku, quantity_added, unit_price, status FROM stock_ledger WHERE id = ?",
+            (ledger_id,),
+        )
+        row = cursor.fetchone()
+        if not row:
+            raise KeyError(f"Ledger entry with ID {ledger_id} not found")
+
+        if row["status"] != "FLAGGED_FOR_REVIEW":
+            raise ValueError(
+                f"Cannot approve entry with status '{row['status']}'. Only 'FLAGGED_FOR_REVIEW' entries can be approved."
+            )
+
+        sku = row["sku"]
+        qty = row["quantity_added"]
+        unit_price = row["unit_price"]
+        prev_status = row["status"]
+
+        # 1. Update ledger status
+        cursor.execute(
+            "UPDATE stock_ledger SET status = ? WHERE id = ?",
+            ("APPROVED_OVERRIDE", ledger_id),
+        )
+
+        # 2. Check catalog and update stock
+        cursor.execute("SELECT current_stock FROM inventory_catalog WHERE sku = ?", (sku,))
+        cat_row = cursor.fetchone()
+        if cat_row:
+            cursor.execute(
+                "UPDATE inventory_catalog SET current_stock = current_stock + ? WHERE sku = ?",
+                (qty, sku),
+            )
+            updated_stock = cat_row["current_stock"] + qty
+        else:
+            # New SKU imported via override
+            cursor.execute(
+                """
+                INSERT INTO inventory_catalog (sku, name, current_stock, avg_unit_cost)
+                VALUES (?, ?, ?, ?)
+                """,
+                (sku, f"Imported SKU ({sku})", qty, unit_price),
+            )
+            updated_stock = qty
+
+        conn.commit()
+
+        return {
+            "ledger_id": ledger_id,
+            "invoice_number": row["invoice_number"],
+            "sku": sku,
+            "previous_status": prev_status,
+            "new_status": "APPROVED_OVERRIDE",
+            "updated_stock": updated_stock,
+        }
+
+
+def reject_ledger_entry(ledger_id: int, db_path: Optional[str] = None) -> Dict[str, Any]:
+    """Reject a quarantined ledger entry, update status to REJECTED, and preserve catalog stock."""
+    with get_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id, invoice_number, sku, quantity_added, unit_price, status FROM stock_ledger WHERE id = ?",
+            (ledger_id,),
+        )
+        row = cursor.fetchone()
+        if not row:
+            raise KeyError(f"Ledger entry with ID {ledger_id} not found")
+
+        if row["status"] != "FLAGGED_FOR_REVIEW":
+            raise ValueError(
+                f"Cannot reject entry with status '{row['status']}'. Only 'FLAGGED_FOR_REVIEW' entries can be rejected."
+            )
+
+        sku = row["sku"]
+        prev_status = row["status"]
+
+        # 1. Update ledger status
+        cursor.execute(
+            "UPDATE stock_ledger SET status = ? WHERE id = ?",
+            ("REJECTED", ledger_id),
+        )
+
+        # 2. Query current stock (unchanged)
+        cursor.execute("SELECT current_stock FROM inventory_catalog WHERE sku = ?", (sku,))
+        cat_row = cursor.fetchone()
+        current_stock = cat_row["current_stock"] if cat_row else 0
+
+        conn.commit()
+
+        return {
+            "ledger_id": ledger_id,
+            "invoice_number": row["invoice_number"],
+            "sku": sku,
+            "previous_status": prev_status,
+            "new_status": "REJECTED",
+            "updated_stock": current_stock,
+        }
+

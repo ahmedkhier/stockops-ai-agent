@@ -19,6 +19,7 @@ COPY app/ app/
 COPY scripts/ scripts/
 COPY sample_data/ sample_data/
 COPY evals/ evals/
+COPY pyproject.toml pyproject.toml
 COPY .env.example .env.example
 
 # Ensure SQLite storage directory exists
