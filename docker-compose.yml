@@ -1,0 +1,33 @@
+services:
+  stockops-agent:
+    build: .
+    container_name: stockops-agent
+    ports:
+      - "8000:8000"
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
+      - PRICE_SPIKE_THRESHOLD_PCT=${PRICE_SPIKE_THRESHOLD_PCT:-15.0}
+      - MIN_CONFIDENCE_SCORE=${MIN_CONFIDENCE_SCORE:-0.85}
+      - ALERT_WEBHOOK_URL=http://n8n:5678/webhook/invoice-anomaly
+      - SQLITE_DB_PATH=/app/data/inventory.db
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      - n8n
+    restart: unless-stopped
+
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    container_name: stockops-n8n
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_BASIC_AUTH_ACTIVE=false
+      - WEBHOOK_URL=http://localhost:5678/
+    volumes:
+      - n8n_data:/home/node/.n8n
+    restart: unless-stopped
+
+volumes:
+  n8n_data:
