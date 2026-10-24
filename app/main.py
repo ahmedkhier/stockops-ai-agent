@@ -3,8 +3,11 @@
 import logging
 from contextlib import asynccontextmanager
 from typing import Any, Dict, List
+from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
+
+load_dotenv()
 
 from app.agent import evaluate_anomalies, extract_invoice_from_bytes
 from app.database import (
