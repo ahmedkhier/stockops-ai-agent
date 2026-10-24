@@ -7,6 +7,8 @@ services:
     environment:
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - OPENROUTER_MODEL=${OPENROUTER_MODEL:-google/gemini-2.5-flash}
       - PRICE_SPIKE_THRESHOLD_PCT=${PRICE_SPIKE_THRESHOLD_PCT:-15.0}
       - MIN_CONFIDENCE_SCORE=${MIN_CONFIDENCE_SCORE:-0.85}
       - ALERT_WEBHOOK_URL=http://n8n:5678/webhook/invoice-anomaly

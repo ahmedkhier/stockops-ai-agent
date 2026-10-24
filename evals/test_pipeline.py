@@ -9,7 +9,12 @@ from fastapi.testclient import TestClient
 import httpx
 import pytest
 
-from app.agent import evaluate_anomalies, extract_invoice_from_bytes
+from app.agent import (
+    evaluate_anomalies,
+    extract_invoice_from_bytes,
+    extract_invoice_via_openrouter,
+    get_active_llm_provider,
+)
 from app.database import (
     commit_invoice_to_stock,
     get_historical_unit_cost,
@@ -532,3 +537,168 @@ def test_api_ingest_anomaly_invoice_quarantined_and_webhook_alerted(api_client):
     inv_response = api_client.get("/api/v1/inventory")
     catalog = {i["sku"]: i["current_stock"] for i in inv_response.json()}
     assert catalog["FL-COB-100W-IP65"] == 45
+
+
+# ---------------------------------------------------------
+# OpenRouter API Key & Vision Pipeline Tests
+# ---------------------------------------------------------
+
+def test_get_active_llm_provider_detection(monkeypatch):
+    """Verify provider detection for Gemini, explicit OpenRouter, and sk-or- prefix."""
+    # 1. Default fallback to Gemini
+    monkeypatch.setenv("OPENROUTER_API_KEY", "")
+    monkeypatch.setenv("GEMINI_API_KEY", "")
+    provider, key, model = get_active_llm_provider()
+    assert provider == "gemini"
+    assert model == "gemini-2.5-flash"
+
+    # 2. Explicit OPENROUTER_API_KEY
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-v1-my-openrouter-key")
+    provider, key, model = get_active_llm_provider()
+    assert provider == "openrouter"
+    assert key == "sk-or-v1-my-openrouter-key"
+    assert "gemini" in model
+
+    # 3. GEMINI_API_KEY containing an OpenRouter key starting with sk-or-
+    monkeypatch.setenv("OPENROUTER_API_KEY", "")
+    monkeypatch.setenv("GEMINI_API_KEY", "sk-or-v1-pasted-into-gemini-key")
+    provider, key, model = get_active_llm_provider()
+    assert provider == "openrouter"
+    assert key == "sk-or-v1-pasted-into-gemini-key"
+
+
+def test_extract_invoice_via_openrouter_mocked():
+    """Verify that extract_invoice_via_openrouter parses valid JSON responses."""
+    mock_payload = {
+        "choices": [
+            {
+                "message": {
+                    "content": json.dumps({
+                        "supplier_name": "Lumiere Industrial Supply",
+                        "invoice_number": "INV-2026-101",
+                        "invoice_date": "2026-10-24",
+                        "currency": "USD",
+                        "items": [
+                            {
+                                "sku": "LED-PNL-6060-40W",
+                                "description": "Backlit LED Panel 60x60cm 40W 6500K",
+                                "quantity": 10,
+                                "unit_price": 14.50,
+                                "line_total": 145.00,
+                            }
+                        ],
+                        "subtotal": 145.00,
+                        "tax_amount": 0.00,
+                        "total_amount": 145.00,
+                        "extraction_confidence": 0.98,
+                    })
+                }
+            }
+        ]
+    }
+
+    mock_client = MagicMock()
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.raise_for_status = MagicMock()
+    mock_resp.json.return_value = mock_payload
+    mock_client.post.return_value = mock_resp
+
+    extracted = extract_invoice_via_openrouter(
+        file_bytes=b"sample-png-bytes",
+        mime_type="image/png",
+        api_key="sk-or-v1-test-key",
+        model_name="google/gemini-2.5-flash",
+        http_client=mock_client,
+    )
+
+    assert extracted.invoice_number == "INV-2026-101"
+    assert extracted.items[0].line_total == 145.00
+    mock_client.post.assert_called_once()
+    call_kwargs = mock_client.post.call_args[1]
+    assert call_kwargs["headers"]["Authorization"] == "Bearer sk-or-v1-test-key"
+    assert "data:image/png;base64," in json.dumps(call_kwargs["json"])
+
+
+def test_extract_invoice_via_openrouter_self_correction():
+    """Verify OpenRouter self-corrects bad math across retry attempts."""
+    # Attempt 1: Line total math error
+    bad_resp = MagicMock()
+    bad_resp.status_code = 200
+    bad_resp.raise_for_status = MagicMock()
+    bad_resp.json.return_value = {
+        "choices": [
+            {
+                "message": {
+                    "content": json.dumps({
+                        "supplier_name": "Lumiere Industrial Supply",
+                        "invoice_number": "INV-2026-101",
+                        "invoice_date": "2026-10-24",
+                        "currency": "USD",
+                        "items": [
+                            {
+                                "sku": "LED-PNL-6060-40W",
+                                "description": "Backlit LED Panel 60x60cm 40W 6500K",
+                                "quantity": 10,
+                                "unit_price": 14.50,
+                                "line_total": 180.00,  # Invalid line total
+                            }
+                        ],
+                        "subtotal": 180.00,
+                        "tax_amount": 0.00,
+                        "total_amount": 180.00,
+                        "extraction_confidence": 0.95,
+                    })
+                }
+            }
+        ]
+    }
+
+    # Attempt 2: Fixed arithmetic
+    good_resp = MagicMock()
+    good_resp.status_code = 200
+    good_resp.raise_for_status = MagicMock()
+    good_resp.json.return_value = {
+        "choices": [
+            {
+                "message": {
+                    "content": json.dumps({
+                        "supplier_name": "Lumiere Industrial Supply",
+                        "invoice_number": "INV-2026-101",
+                        "invoice_date": "2026-10-24",
+                        "currency": "USD",
+                        "items": [
+                            {
+                                "sku": "LED-PNL-6060-40W",
+                                "description": "Backlit LED Panel 60x60cm 40W 6500K",
+                                "quantity": 10,
+                                "unit_price": 14.50,
+                                "line_total": 145.00,
+                            }
+                        ],
+                        "subtotal": 145.00,
+                        "tax_amount": 0.00,
+                        "total_amount": 145.00,
+                        "extraction_confidence": 0.98,
+                    })
+                }
+            }
+        ]
+    }
+
+    mock_client = MagicMock()
+    mock_client.post.side_effect = [bad_resp, good_resp]
+
+    extracted = extract_invoice_via_openrouter(
+        file_bytes=b"sample-png-bytes",
+        mime_type="image/png",
+        api_key="sk-or-v1-test-key",
+        model_name="google/gemini-2.5-flash",
+        max_retries=2,
+        http_client=mock_client,
+    )
+
+    assert extracted.invoice_number == "INV-2026-101"
+    assert extracted.items[0].line_total == 145.00
+    assert mock_client.post.call_count == 2
+

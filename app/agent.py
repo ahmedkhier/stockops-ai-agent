@@ -1,9 +1,14 @@
-"""Gemini multimodal vision extraction, self-correction retry loop, and anomaly audit."""
+"""Multimodal vision extraction, self-correction retry loop, and anomaly audit.
 
+Supports both Google GenAI (Gemini) and OpenRouter (any vision model).
+"""
+
+import base64
 import json
 import logging
 import os
 from typing import List, Optional, Tuple
+import httpx
 from pydantic import ValidationError
 from google import genai
 from google.genai import types
@@ -26,21 +31,44 @@ Ensure clean JSON output conforming strictly to the requested schema.
 """
 
 
+def get_active_llm_provider() -> Tuple[str, str, str]:
+    """Detect whether OpenRouter or Google GenAI is configured.
+
+    Returns (provider, api_key, model_name).
+    provider is either 'openrouter' or 'gemini'.
+    """
+    openrouter_key = os.getenv("OPENROUTER_API_KEY", "").strip()
+    gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
+
+    # 1. Explicit OPENROUTER_API_KEY set
+    if openrouter_key and openrouter_key != "your_api_key_here":
+        model = os.getenv("OPENROUTER_MODEL") or os.getenv("GEMINI_MODEL") or "google/gemini-2.5-flash"
+        return "openrouter", openrouter_key, model
+
+    # 2. GEMINI_API_KEY contains an OpenRouter key (starts with sk-or-)
+    if gemini_key and gemini_key.startswith("sk-or-"):
+        model = os.getenv("OPENROUTER_MODEL") or os.getenv("GEMINI_MODEL") or "google/gemini-2.5-flash"
+        return "openrouter", gemini_key, model
+
+    # 3. Default to Google GenAI
+    model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    return "gemini", gemini_key, model
+
+
 def get_genai_client(api_key: Optional[str] = None) -> genai.Client:
     """Return a configured google-genai Client."""
     key = api_key or os.getenv("GEMINI_API_KEY")
     return genai.Client(api_key=key)
 
 
-def extract_invoice_from_bytes(
+def _extract_via_gemini_client(
+    ai_client: genai.Client,
     file_bytes: bytes,
     mime_type: str,
     max_retries: int = 2,
-    client: Optional[genai.Client] = None,
     model_name: Optional[str] = None,
 ) -> ExtractedInvoice:
-    """Extract structured invoice data with Gemini multimodal API and self-correct on validation error."""
-    ai_client = client or get_genai_client()
+    """Extract structured invoice data using the official Google GenAI SDK with self-correction."""
     target_model = model_name or os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
     media_part = types.Part.from_bytes(data=file_bytes, mime_type=mime_type)
@@ -66,19 +94,17 @@ def extract_invoice_from_bytes(
             )
 
             raw_text = response.text or ""
-            # Parse with Pydantic v2
             invoice = ExtractedInvoice.model_validate_json(raw_text)
             return invoice
 
         except (ValidationError, json.JSONDecodeError, ValueError) as err:
             last_error = err
             logger.warning(
-                "Invoice extraction attempt %d failed validation: %s",
+                "Gemini extraction attempt %d failed validation: %s",
                 attempt + 1,
                 str(err),
             )
             if attempt < max_retries:
-                # Append correction prompt for self-healing loop
                 retry_prompt = (
                     f"CRITICAL CORRECTION REQUIRED:\n"
                     f"Your previous extraction failed deterministic validation with error:\n"
@@ -94,7 +120,164 @@ def extract_invoice_from_bytes(
 
     if last_error:
         raise last_error
-    raise RuntimeError("Failed to extract invoice after maximum retries.")
+    raise RuntimeError("Failed to extract invoice via Gemini after maximum retries.")
+
+
+def extract_invoice_via_openrouter(
+    file_bytes: bytes,
+    mime_type: str,
+    api_key: str,
+    model_name: str,
+    max_retries: int = 2,
+    http_client: Optional[httpx.Client] = None,
+) -> ExtractedInvoice:
+    """Extract structured invoice data using OpenRouter API with multimodal vision and self-correcting retry loop."""
+    base64_data = base64.b64encode(file_bytes).decode("utf-8")
+    data_url = f"data:{mime_type};base64,{base64_data}"
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "HTTP-Referer": "https://github.com/stockops/stockops-ai-agent",
+        "X-Title": "StockOps AI Agent",
+        "Content-Type": "application/json",
+    }
+
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "image_url",
+                    "image_url": {"url": data_url},
+                },
+                {
+                    "type": "text",
+                    "text": (
+                        "Extract all invoice data from this document accurately following all arithmetic guardrails. "
+                        "Output strictly valid JSON matching the schema."
+                    ),
+                },
+            ],
+        },
+    ]
+
+    client = http_client or httpx.Client(timeout=60.0)
+    should_close_client = http_client is None
+    last_error: Optional[Exception] = None
+
+    try:
+        for attempt in range(max_retries + 1):
+            payload = {
+                "model": model_name,
+                "messages": messages,
+                "response_format": {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "ExtractedInvoice",
+                        "strict": True,
+                        "schema": ExtractedInvoice.model_json_schema(),
+                    },
+                },
+            }
+
+            try:
+                response = client.post(
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    headers=headers,
+                    json=payload,
+                )
+                response.raise_for_status()
+                res_json = response.json()
+                raw_text = res_json["choices"][0]["message"]["content"]
+
+                # Clean markdown codeblocks if model wrapped output
+                clean_text = raw_text.strip()
+                if clean_text.startswith("```json"):
+                    clean_text = clean_text[7:]
+                elif clean_text.startswith("```"):
+                    clean_text = clean_text[3:]
+                if clean_text.endswith("```"):
+                    clean_text = clean_text[:-3]
+                clean_text = clean_text.strip()
+
+                invoice = ExtractedInvoice.model_validate_json(clean_text)
+                return invoice
+
+            except (ValidationError, json.JSONDecodeError, ValueError, KeyError, httpx.HTTPError) as err:
+                last_error = err
+                logger.warning(
+                    "OpenRouter extraction attempt %d failed validation: %s",
+                    attempt + 1,
+                    str(err),
+                )
+                if attempt < max_retries:
+                    err_msg = str(err)
+                    prev_content = raw_text if "raw_text" in locals() else ""
+                    messages.append({"role": "assistant", "content": prev_content})
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            f"CRITICAL CORRECTION REQUIRED:\n"
+                            f"Your previous extraction failed deterministic validation with error:\n"
+                            f"{err_msg}\n\n"
+                            f"Recalculate all quantities, unit prices, line totals, subtotal, and total amount. "
+                            f"Ensure line_total == quantity * unit_price and subtotal == sum(line_totals). "
+                            f"Return the corrected JSON conforming to the schema."
+                        ),
+                    })
+                else:
+                    raise last_error
+    finally:
+        if should_close_client:
+            client.close()
+
+    if last_error:
+        raise last_error
+    raise RuntimeError("Failed to extract invoice via OpenRouter after maximum retries.")
+
+
+def extract_invoice_from_bytes(
+    file_bytes: bytes,
+    mime_type: str,
+    max_retries: int = 2,
+    client: Optional[genai.Client] = None,
+    model_name: Optional[str] = None,
+    http_client: Optional[httpx.Client] = None,
+) -> ExtractedInvoice:
+    """Extract structured invoice data with Gemini or OpenRouter and self-correct on validation error."""
+    # If a custom/mocked client is passed directly, use Gemini path (preserves unit test mocks)
+    if client is not None:
+        return _extract_via_gemini_client(
+            ai_client=client,
+            file_bytes=file_bytes,
+            mime_type=mime_type,
+            max_retries=max_retries,
+            model_name=model_name,
+        )
+
+    provider, api_key, detected_model = get_active_llm_provider()
+    target_model = model_name or detected_model
+
+    if provider == "openrouter":
+        logger.info("Extracting invoice via OpenRouter provider (model: %s)", target_model)
+        return extract_invoice_via_openrouter(
+            file_bytes=file_bytes,
+            mime_type=mime_type,
+            api_key=api_key,
+            model_name=target_model,
+            max_retries=max_retries,
+            http_client=http_client,
+        )
+
+    ai_client = get_genai_client(api_key=api_key)
+    return _extract_via_gemini_client(
+        ai_client=ai_client,
+        file_bytes=file_bytes,
+        mime_type=mime_type,
+        max_retries=max_retries,
+        model_name=target_model,
+    )
 
 
 def evaluate_anomalies(

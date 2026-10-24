@@ -306,8 +306,13 @@ async def ingest_invoice(file: UploadFile = File(...)) -> ProcessingResult:
             detail="Uploaded file is empty.",
         )
 
-    api_key = os.getenv("GEMINI_API_KEY", "")
-    is_demo_mode = (not api_key) or (api_key.strip() in ("", "your_api_key_here"))
+    gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
+    openrouter_key = os.getenv("OPENROUTER_API_KEY", "").strip()
+    has_live_key = bool(
+        (gemini_key and gemini_key != "your_api_key_here")
+        or (openrouter_key and openrouter_key != "your_api_key_here")
+    )
+    is_demo_mode = not has_live_key
 
     extracted_invoice: Optional[ExtractedInvoice] = None
 

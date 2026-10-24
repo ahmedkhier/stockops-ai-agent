@@ -4,10 +4,11 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115%2B-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![Pydantic v2](https://img.shields.io/badge/Pydantic-v2.10-E92063.svg?logo=pydantic&logoColor=white)](https://docs.pydantic.dev/)
 [![Google Gemini API](https://img.shields.io/badge/Google%20Gemini-google--genai-4285F4.svg?logo=google&logoColor=white)](https://github.com/google-gemini/deprecations)
+[![OpenRouter API](https://img.shields.io/badge/OpenRouter-API%20Supported-6366F1.svg)](https://openrouter.ai/)
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED.svg?logo=docker&logoColor=white)](https://www.docker.com/)
-[![Tests Passing](https://img.shields.io/badge/Tests-36%2F36%20Passing-brightgreen.svg)](https://pytest.org/)
+[![Tests Passing](https://img.shields.io/badge/Tests-39%2F39%20Passing-brightgreen.svg)](https://pytest.org/)
 
-**StockOps AI Agent** is an enterprise-grade autonomous inventory intelligence and invoice verification system. It ingests supplier invoices in multiple multimodal formats (PNG, JPEG, WebP, PDF), extracts structured line items via Google Gemini (`google-genai`), enforces deterministic arithmetic guardrails via Pydantic v2 with an automated LLM self-correction loop, audits unit costs against historical SQLite baselines, auto-commits verified stock to an immutable ledger, and quenches price drift by dispatching asynchronous webhook alerts (n8n/Slack) for price spikes, unrecognized SKUs, or low-confidence scans.
+**StockOps AI Agent** is an enterprise-grade autonomous inventory intelligence and invoice verification system. It ingests supplier invoices in multiple multimodal formats (PNG, JPEG, WebP, PDF), extracts structured line items via Google Gemini (`google-genai`) or OpenRouter (`OPENROUTER_API_KEY`), enforces deterministic arithmetic guardrails via Pydantic v2 with an automated LLM self-correction loop, audits unit costs against historical SQLite baselines, auto-commits verified stock to an immutable ledger, and quenches price drift by dispatching asynchronous webhook alerts (n8n/Slack) for price spikes, unrecognized SKUs, or low-confidence scans.
 
 Includes a **Live Operations Web Dashboard UI** served directly from FastAPI at `http://localhost:8000/` featuring live KPI telemetry, drag-and-drop document inspection, an instant 1-click scenario simulator, and an interactive **Human-in-the-Loop (HITL)** quarantine queue for manual review approvals or rejections.
 
@@ -170,7 +171,7 @@ pip install -r requirements.txt
 # 3. Generate synthetic sample invoices
 python scripts/generate_samples.py
 
-# 4. Run the full test suite (36 tests)
+# 4. Run the full test suite (39 tests)
 pytest -v
 
 # 5. Start the FastAPI development server & Web UI
